@@ -1,0 +1,69 @@
+# Hardened Ghost + MySQL. Secrets come from .env (see .env.example).
+name: ghost-hardened
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: unless-stopped
+
+services:
+  ghost:
+    <<: *hardening
+    build: .
+    image: ghost-hardened:6.77.0
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:2368:2368"   # put a TLS-terminating reverse proxy in front
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=512m
+    volumes:
+      - ghost-content:/ghost/content
+    environment:
+      url: ${GHOST_URL}
+      database__client: mysql
+      database__connection__host: mysql
+      database__connection__user: ghost
+      database__connection__password: ${MYSQL_PASSWORD}
+      database__connection__database: ghost
+      mail__transport: SMTP
+      mail__from: ${MAIL_FROM}
+      mail__options__host: ${SMTP_HOST}
+      mail__options__port: ${SMTP_PORT:-587}
+      mail__options__auth__user: ${SMTP_USER}
+      mail__options__auth__pass: ${SMTP_PASS}
+    pids_limit: 256
+    mem_limit: 1g
+    healthcheck:
+      # Separate node process (no shell/curl in the image); runs without the permission flags.
+      test: ["CMD", "/usr/local/bin/node", "-e", "fetch('http://127.0.0.1:2368/ghost/api/admin/site/').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+  mysql:
+    <<: *hardening
+    image: mysql:8.4
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE]   # entrypoint chowns datadir then drops to mysql user
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev
+      - /var/run/mysqld:rw,noexec,nosuid,nodev
+    volumes:
+      - mysql-data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ghost
+      MYSQL_USER: ghost
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ghost-content:
+  mysql-data:

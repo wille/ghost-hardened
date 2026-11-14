@@ -1,0 +1,105 @@
+name: build
+
+# Builds with Docker's reusable GitHub Builder (isolated BuildKit, signed SLSA
+# provenance + SBOM), pushes to GHCR, then cosign-signs the image digest keyless
+# with this repository's workflow identity.
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    uses: docker/github-builder/.github/workflows/build.yml@a31d2311da4d55e21b978c1c52bab82ba97d51ee # v1.19.0
+    permissions:
+      contents: read   # fetch the repository
+      id-token: write  # sign provenance attestations and cache entries via GitHub OIDC
+      packages: write  # push to GHCR
+    with:
+      output: image
+      push: ${{ github.event_name != 'pull_request' }}
+      platforms: linux/amd64,linux/arm64
+      sbom: true
+      cache: true
+      registry-login: ${{ github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork }}
+      meta-images: ghcr.io/${{ github.repository }}
+      meta-tags: |
+        type=ref,event=branch
+        type=ref,event=pr
+        type=semver,pattern={{version}}
+        type=semver,pattern={{major}}.{{minor}}
+        type=sha,format=long
+      set-meta-labels: true
+      set-meta-annotations: true
+    secrets:
+      registry-auths: |
+        - registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+  # Verifies the builder's signed provenance attestations.
+  verify-provenance:
+    if: github.event_name != 'pull_request'
+    needs: build
+    uses: docker/github-builder/.github/workflows/verify.yml@a31d2311da4d55e21b978c1c52bab82ba97d51ee # v1.19.0
+    permissions:
+      contents: read  # required by the reusable workflow
+      packages: read  # pull attestations from GHCR (package may be private)
+    with:
+      builder-outputs: ${{ toJSON(needs.build.outputs) }}
+    secrets:
+      registry-auths: |
+        - registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+  # Signs the pushed image (multi-arch index digest) so consumers can
+  # `cosign verify` it against this repository's workflow identity.
+  sign:
+    name: Sign image
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # keyless signing via Fulcio
+      packages: write  # push signature to GHCR
+    env:
+      DIGEST: ${{ needs.build.outputs.digest }}
+      IDENTITY: https://github.com/${{ github.workflow_ref }}
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign image
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}@${DIGEST}"
+          cosign sign --yes "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify signature
+        run: |
+          cosign verify "$IMAGE" \
+            --certificate-identity "$IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          {
+            echo '### Signed image'
+            echo '```'
+            echo "$IMAGE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
