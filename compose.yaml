@@ -11,7 +11,7 @@ services:
   ghost:
     <<: *hardening
     build: .
-    image: ghost-hardened:6.77.0
+    image: ghost-hardened:6.78.0
     depends_on:
       mysql:
         condition: service_healthy

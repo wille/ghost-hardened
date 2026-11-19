@@ -12,7 +12,7 @@
 # force granting read on /var. Content volume therefore mounts at /ghost/content.
 
 # Base images are pinned by tag + digest as literal FROM lines so Dependabot can bump them.
-FROM ghost:6.77.0@sha256:2e3ca97643ea2a8cde6d0c97fae15ff39bfb60714f5abaab3f65263a2ed7c2a7 AS build
+FROM ghost:6.78.0@sha256:985ef9f30fb897a29050a9ef956bff1737ff1f2cd955aa5b759b88251f9c8735 AS build
 RUN set -eux; \
     cp -a /var/lib/ghost /ghost; \
     cd /ghost; \

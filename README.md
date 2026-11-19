@@ -18,10 +18,18 @@ A drop-in alternative to the official `ghost:6` image. It uses the same Ghost bu
 - **Bundled themes:** Casper and Source are copied into the volume rather than symlinked, because Node's permission model forbids `symlink()`. They are refreshed automatically when the image ships a new version.
 - **Logging:** logs go to stdout only, never to files.
 
-## Verified (Ghost 6.77.0, Node 22.23.5)
+## Verified (Ghost 6.78.0, Node 22.23.5)
 
 - **Working:** sqlite and MySQL 8.4, admin setup and login, posts, image upload and sharp resizing, theme upload and activation, database export and import, the healthcheck, and restarts.
 - **Blocked under the image's flags:** `child_process` (including through `process.binding` and inside workers), reads of `/etc` and `/proc`, writes to Ghost's code and config, WASI, and native addons outside the release tree.
+
+To rerun these checks against any build:
+
+```bash
+docker build -t ghost-hardened:dev . && test/smoke.sh ghost-hardened:dev
+```
+
+[test/smoke.sh](test/smoke.sh) boots the image with the same runtime hardening as `compose.yaml` and exercises the admin flows above. It then runs [test/attack.js](test/attack.js) under the image's exact Node flags.
 
 ## Not covered (Node 22 limits)
 
